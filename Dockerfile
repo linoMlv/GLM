@@ -1,35 +1,31 @@
-# --- Étape 1 : Build des binaires Go & génération de la base ---
+# --- Étape 1 : Compilation ---
 FROM golang:1.26-alpine AS builder
 
 ENV GOTOOLCHAIN=auto
 WORKDIR /app
 
-# Copie des sources
+# Copie du code source
 COPY . .
 
-# 1. Initialisation du module et installation des dépendances
-# 2. Compilation de l'outil token-collector
-# 3. Compilation du serveur zai-api
-# 4. Exécution initiale de token-collector pour créer tokens.sqlite
-RUN go mod init zai-api && \
+# Compilation de zai-api et création du fichier tokens.sqlite vide
+RUN go mod init zai-api 2>/dev/null || true && \
     go mod tidy && \
-    CGO_ENABLED=0 GOOS=linux go build -o token-collector -trimpath -ldflags="-s -w" ./cmd/token-collector && \
     CGO_ENABLED=0 GOOS=linux go build -o zai-api -trimpath -ldflags="-s -w" . && \
-    ./token-collector
+    CGO_ENABLED=0 GOOS=linux go build -o token-collector -trimpath -ldflags="-s -w" ./cmd/token-collector && \
+    touch tokens.sqlite
 
-# --- Étape 2 : Image d'exécution minimale ---
+# --- Étape 2 : Image d'exécution ---
 FROM alpine:latest
 
 RUN apk add --no-cache ca-certificates tzdata
 
 WORKDIR /app
 
-# Copie des binaires et de la base de données générée
-COPY --from=builder /app/zai-api /app/zai-api
-COPY --from=builder /app/token-collector /app/token-collector
-COPY --from=builder /app/tokens.sqlite /app/tokens.sqlite
+# Copie des fichiers compilés et du fichier SQLite
+COPY --from=builder /app/zai-api /app/
+COPY --from=builder /app/token-collector /app/
+COPY --from=builder /app/tokens.sqlite /app/
 
 EXPOSE 3001
 
-# Lancement sécurisé : régénère la BDD si elle est absente puis lance zai-api
-CMD ["/bin/sh", "-c", "if [ ! -f /app/tokens.sqlite ]; then /app/token-collector; fi && /app/zai-api"]
+CMD ["/app/zai-api"]
